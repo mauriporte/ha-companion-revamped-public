@@ -1,0 +1,22 @@
+{
+  "homeUrl": "http://192.168.1.10:8123",
+  "externalUrl": "https://ha.example.com",
+  "dashboard": "dashboard-home",
+  "alarm": "alarm_control_panel.home_alarm",
+  "weather": "weather.home",
+  "away": "switch.away_mode",
+  "servers": [
+    {"name": "Server 1", "cpu": "sensor.server1_cpu", "ram": "sensor.server1_memory", "disk": "sensor.server1_disk", "temp": "sensor.server1_temperature"},
+    {"name": "NAS", "cpu": "sensor.nas_cpu", "ram": "sensor.nas_memory", "disk": "sensor.nas_disk", "temp": null}
+  ],
+  "ring": [
+    {"id": "light.dining_room", "icon": "mdi:ceiling-light", "color": "amber"},
+    {"id": "light.living_room", "icon": "mdi:lightbulb", "color": "orange"},
+    {"id": "light.bedroom", "icon": "mdi:lamp-night", "color": "#E65100"},
+    {"id": "switch.monitors", "icon": "mdi:monitor-multiple", "color": "green"},
+    {"id": "switch.away_mode", "icon": "mdi:home-export-outline", "color": "#FFEB3B", "solidOn": true},
+    {"id": "switch.night_mode", "icon": "mdi:weather-night", "color": "blue"},
+    {"id": "switch.movie_mode", "icon": "mdi:movie-open", "color": "purple"},
+    {"id": "alarm_control_panel.home_alarm", "icon": "mdi:shield-home", "color": "red", "route": "alarm"}
+  ]
+}
