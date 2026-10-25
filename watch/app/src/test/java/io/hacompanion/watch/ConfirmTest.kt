@@ -25,6 +25,16 @@ class ConfirmTest {
     }
 
     @Test
+    fun homeOrderKeepsSavedAndAddsNewSections() {
+        assertEquals(HOME_SECTIONS, homeOrder(null))
+        assertEquals(listOf("res", "fav", "menus", "areas"), homeOrder("res,fav,bogus,fav"))
+        val o = listOf("a", "b", "c")
+        assertEquals(listOf("b", "a", "c"), moved(o, 1, -1))
+        assertEquals(o, moved(o, 0, -1)) // already first
+        assertEquals(listOf("a", "c", "b"), moved(o, 1, 1))
+    }
+
+    @Test
     fun websocketUrlForHomeAndTunnel() {
         assertEquals("ws://192.168.1.10:8123/api/websocket", Ha.wsUrl("http://192.168.1.10:8123"))
         assertEquals("wss://ha.example.com/api/websocket", Ha.wsUrl("https://ha.example.com/"))

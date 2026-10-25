@@ -1,6 +1,11 @@
 package io.hacompanion.watch
 
 import android.content.Context
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import java.io.File
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.input.pointer.pointerInput
@@ -101,6 +106,7 @@ import androidx.wear.compose.foundation.rememberSwipeToDismissBoxState
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Chip
+import androidx.wear.compose.material.CompactChip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.Colors
@@ -207,32 +213,88 @@ fun NoToken() = Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Al
     Text("Falta el token de HA.\nEjecuta set-token.ps1 en el PC.", color = Muted, fontSize = 13.sp)
 }
 
+val HOME_SECTIONS = listOf("fav", "menus", "areas", "res")
+
+/** Saved order first (unknown keys dropped), then any section missing from it, so new sections still show. */
+fun homeOrder(saved: String?): List<String> {
+    val kept = saved.orEmpty().split(',').filter { it in HOME_SECTIONS }.distinct()
+    return kept + HOME_SECTIONS.filter { it !in kept }
+}
+
+fun moved(order: List<String>, i: Int, delta: Int): List<String> {
+    val j = i + delta
+    if (i !in order.indices || j !in order.indices) return order
+    return order.toMutableList().apply { add(j, removeAt(i)) }
+}
+
+/** Home sections; press and hold any of them to reorder with ▲ ▼ (saved on the watch). */
 @Composable
 fun Home(ha: Ha, go: (String) -> Unit) {
     val d = ha.dash
+    val ctx = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val file = remember { File(ctx.filesDir, "home_order") }
+    var order by remember { mutableStateOf(homeOrder(file.takeIf { it.exists() }?.readText())) }
+    var sorting by remember { mutableStateOf(false) }
+    val done: () -> Unit = { sorting = false; runCatching { file.writeText(order.joinToString(",")) } }
+    BackHandler(enabled = sorting) { done() }
     val list = rememberScalingLazyListState()
     Scaffold(timeText = { TimeText() }, positionIndicator = { PositionIndicator(list) }) {
         ScalingLazyColumn(Modifier.fillMaxSize(), state = list) {
-            item { ListHeader { Text(stringResource(R.string.app_name), color = HaBlue) } }
-            if (ha.status.isNotEmpty()) item { Text(ha.status, color = Muted, fontSize = 12.sp) }
-            item { SectionChip("Favoritos", Icons.Filled.Star, Amber, d?.let { "${shown(it.fav.ids).size} entidades" }) { go("fav") } }
-            item { SectionChip("Menús", Icons.Filled.Apps, HaBlue, d?.let { "${it.menus.size} servidores" }) { go("list/menus") } }
-            item { SectionChip("Áreas", Icons.Filled.Home, Ok, d?.let { "${it.areas.size} áreas" }) { go("list/areas") } }
-            item { SectionChip("Resúmenes", Icons.Filled.DonutLarge, Violet, "Casa · ${SERVERS.size} servidores") { go("res") } }
+            item { ListHeader { Text(if (sorting) "Ordenar" else stringResource(R.string.app_name), color = HaBlue) } }
+            if (ha.status.isNotEmpty() && !sorting) item { Text(ha.status, color = Muted, fontSize = 12.sp) }
+            items(order.size) { i ->
+                val key = order[i]
+                val (label, icon, tint, sub) = when (key) {
+                    "fav" -> Section("Favoritos", Icons.Filled.Star, Amber, d?.let { "${shown(it.fav.ids).size} entidades" })
+                    "menus" -> Section("Menús", Icons.Filled.Apps, HaBlue, d?.let { "${it.menus.size} servidores" })
+                    "areas" -> Section("Áreas", Icons.Filled.Home, Ok, d?.let { "${it.areas.size} áreas" })
+                    else -> Section("Resúmenes", Icons.Filled.DonutLarge, Violet, "Casa · ${SERVERS.size} servidores")
+                }
+                val route = when (key) { "fav" -> "fav"; "menus" -> "list/menus"; "areas" -> "list/areas"; else -> "res" }
+                if (sorting) SortRow(label, icon, tint, up = { order = moved(order, i, -1) }, down = { order = moved(order, i, 1) })
+                else SectionChip(label, icon, tint, sub, onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); sorting = true }) { go(route) }
+            }
+            if (sorting) item {
+                CompactChip(onClick = { done() }, label = { Text("Listo") }, colors = ChipDefaults.chipColors(backgroundColor = HaBlue, contentColor = Color.Black))
+            }
         }
     }
 }
 
+private data class Section(val label: String, val icon: ImageVector, val tint: Color, val sub: String?)
+
 @Composable
-fun SectionChip(label: String, icon: ImageVector, tint: Color, sub: String?, onClick: () -> Unit) {
-    Chip(
-        onClick = onClick,
-        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        secondaryLabel = if (sub == null) null else ({ Text(sub, color = Muted, maxLines = 1) }),
-        icon = { Icon(icon, contentDescription = null, tint = tint) },
-        colors = ChipDefaults.chipColors(backgroundColor = CardBg, contentColor = Color.White),
-        modifier = Modifier.fillMaxWidth(),
-    )
+fun SortRow(label: String, icon: ImageVector, tint: Color, up: () -> Unit, down: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(26.dp)).background(CardBg).padding(start = 14.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(label, color = Color.White, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
+        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Subir", tint = HaBlue, modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = up).padding(6.dp))
+        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Bajar", tint = HaBlue, modifier = Modifier.size(36.dp).clip(CircleShape).clickable(onClick = down).padding(6.dp))
+    }
+}
+
+/** Chip look (Wear's Chip has no long press), so the home sections can be held to reorder. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SectionChip(label: String, icon: ImageVector, tint: Color, sub: String?, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(26.dp)).background(CardBg)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, color = Color.White, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (sub != null) Text(sub, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
 
 @Composable
