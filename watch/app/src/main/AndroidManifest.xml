@@ -3,6 +3,8 @@
 
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- voice notes to Beeper chats -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- HA is usually plain HTTP on the LAN -->
     <application
@@ -19,6 +21,20 @@
             android:name=".RingTile"
             android:exported="true"
             android:label="@string/app_name"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/ic_launcher" />
+        </service>
+
+        <!-- alarm only: big shield, opens the ALARMA prompt -->
+        <service
+            android:name=".AlarmTile"
+            android:exported="true"
+            android:label="Alarma"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>
                 <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />

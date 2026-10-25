@@ -27,7 +27,7 @@ class ConfirmTest {
     @Test
     fun homeOrderKeepsSavedAndAddsNewSections() {
         assertEquals(HOME_SECTIONS, homeOrder(null))
-        assertEquals(listOf("res", "fav", "menus", "areas"), homeOrder("res,fav,bogus,fav"))
+        assertEquals(listOf("res", "fav", "chats", "menus", "areas"), homeOrder("res,fav,bogus,fav"))
         val o = listOf("a", "b", "c")
         assertEquals(listOf("b", "a", "c"), moved(o, 1, -1))
         assertEquals(o, moved(o, 0, -1)) // already first

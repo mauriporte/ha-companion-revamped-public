@@ -52,7 +52,7 @@ class RingButton(
 val RING get() = Config.ring
 
 /**
- * Round tile: ★ in the center opens Favoritos; 8 toggles around it, one every 45°, lit when on.
+ * Round tile: the center (★, or your logo) opens the ALARMA prompt (Favoritos when no alarm is configured); 8 toggles around it, one every 45°, lit when on.
  * Taps on the ring call HA from here (home address, then the tunnel) and redraw with fresh states.
  */
 class RingTile : TileService() {
@@ -145,7 +145,7 @@ class RingTile : TileService() {
         }
         root.addContent(
             LayoutElementBuilders.Image.Builder().setResourceId("center").setWidth(dp(CENTER_DP)).setHeight(dp(CENTER_DP))
-                .setModifiers(ModifiersBuilders.Modifiers.Builder().setClickable(open("fav", "fav")).build()).build()
+                .setModifiers(ModifiersBuilders.Modifiers.Builder().setClickable(if (ALARM.isBlank()) open("fav", "fav") else open("alarm", "alarm")).build()).build()
         )
         return TileBuilders.Tile.Builder()
             .setResourcesVersion(RES_VERSION)
@@ -155,7 +155,7 @@ class RingTile : TileService() {
     }
 
     companion object {
-        private const val RES_VERSION = "ring-10" // bump when icons/colors change so the watch re-fetches them
+        private const val RES_VERSION = "ring-12" // bump when icons/colors change so the watch re-fetches them
         private const val BUTTON_DP = 44f
         private const val CENTER_DP = 70f
         private const val RING_INSET_DP = 8f
@@ -203,7 +203,7 @@ class RingTile : TileService() {
             }
         }
 
-        private fun png(b: Bitmap): ResourceBuilders.ImageResource {
+        fun png(b: Bitmap): ResourceBuilders.ImageResource {
             val bytes = ByteArrayOutputStream().also { b.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
             return ResourceBuilders.ImageResource.Builder().setInlineResource(
                 ResourceBuilders.InlineImageResource.Builder()

@@ -6,6 +6,32 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import java.io.File
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.wear.compose.material.CompactChip
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.VideoView
+import android.net.Uri
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Mic
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.Manifest
+import androidx.wear.input.RemoteInputIntentHelper
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
+import android.app.RemoteInput
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.input.pointer.pointerInput
@@ -46,6 +72,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Light
@@ -106,7 +133,6 @@ import androidx.wear.compose.foundation.rememberSwipeToDismissBoxState
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Chip
-import androidx.wear.compose.material.CompactChip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.Colors
@@ -179,6 +205,13 @@ fun App(ha: Ha, route: String? = null, routeShown: () -> Unit = {}) {
                 Pages(ha, g, if (menus) HaBlue else Ok, sdb)
             }
             composable("res") { Summaries(ha, sdb) }
+            // every camera on the dashboard, one page each (opened from Joint Launcher's shortcuts tile)
+            composable("cams") { ha.dash?.let { d -> Pages(ha, Group("Cámaras", d.all.filter { it.startsWith("camera.") }.distinct()), Violet, sdb) } ?: Loading(ha) }
+            composable("chats") { ChatsList(ha) { nav.navigate("chat/$it") } }
+            composable("chat/{i}") { e ->
+                val chat = ha.beeperChats.getOrNull(e.arguments?.getString("i")?.toIntOrNull() ?: -1) ?: return@composable Loading(ha)
+                ChatView(ha, chat)
+            }
         }
         ha.confirm?.let { ConfirmOverlay(ha, it) }
         if (ha.alarmPrompt) AlarmOverlay(ha)
@@ -213,7 +246,7 @@ fun NoToken() = Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Al
     Text("Falta el token de HA.\nEjecuta set-token.ps1 en el PC.", color = Muted, fontSize = 13.sp)
 }
 
-val HOME_SECTIONS = listOf("fav", "menus", "areas", "res")
+val HOME_SECTIONS = listOf("fav", "chats", "menus", "areas", "res")
 
 /** Saved order first (unknown keys dropped), then any section missing from it, so new sections still show. */
 fun homeOrder(saved: String?): List<String> {
@@ -247,11 +280,12 @@ fun Home(ha: Ha, go: (String) -> Unit) {
                 val key = order[i]
                 val (label, icon, tint, sub) = when (key) {
                     "fav" -> Section("Favoritos", Icons.Filled.Star, Amber, d?.let { "${shown(it.fav.ids).size} entidades" })
+                    "chats" -> Section("Chats", Icons.AutoMirrored.Filled.Chat, Color(0xFF25D366), "Beeper")
                     "menus" -> Section("Menús", Icons.Filled.Apps, HaBlue, d?.let { "${it.menus.size} servidores" })
                     "areas" -> Section("Áreas", Icons.Filled.Home, Ok, d?.let { "${it.areas.size} áreas" })
                     else -> Section("Resúmenes", Icons.Filled.DonutLarge, Violet, "Casa · ${SERVERS.size} servidores")
                 }
-                val route = when (key) { "fav" -> "fav"; "menus" -> "list/menus"; "areas" -> "list/areas"; else -> "res" }
+                val route = when (key) { "fav" -> "fav"; "chats" -> "chats"; "menus" -> "list/menus"; "areas" -> "list/areas"; else -> "res" }
                 if (sorting) SortRow(label, icon, tint, up = { order = moved(order, i, -1) }, down = { order = moved(order, i, 1) })
                 else SectionChip(label, icon, tint, sub, onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); sorting = true }) { go(route) }
             }
@@ -385,7 +419,7 @@ fun Paged(count: Int, tint: Color, sdb: SwipeToDismissBoxState, content: @Compos
 }
 
 /** Kill switches, server power and locks ask for confirmation, so a stray tap can't cut a machine off. */
-fun guarded(id: String) = "kill_switch" in id || id.startsWith("lock.")
+fun guarded(id: String) = "kill_switch" in id || "smart_switch" in id || id.startsWith("lock.")
 
 /** "¿Apagar Server 1?" — the question the confirmation asks for this entity's next action. */
 fun confirmQuestion(e: Ent, name: String): String = when {
@@ -501,6 +535,268 @@ fun AlarmOverlay(ha: Ha) {
     }
 }
 
+private val NETWORK_COLORS = mapOf(
+    "whatsapp" to Color(0xFF25D366), "telegram" to Color(0xFF29B6F6), "instagram" to Color(0xFFE1306C),
+    "linkedin" to Color(0xFF0A66C2), "google messages" to Color(0xFF1A73E8), "beeper" to Color(0xFF9C27B0),
+)
+
+fun networkColor(network: String) = NETWORK_COLORS.entries.firstOrNull { network.lowercase().contains(it.key) }?.value ?: HaBlue
+
+/** Recent Beeper chats (all networks), newest first. Needs the PC with Beeper Desktop on. */
+@Composable
+fun ChatsList(ha: Ha, open: (Int) -> Unit) {
+    LaunchedEffect(Unit) { ha.loadChats() }
+    val list = rememberScalingLazyListState()
+    val chats = ha.beeperChats
+    Scaffold(positionIndicator = { PositionIndicator(list) }) {
+        ScalingLazyColumn(Modifier.fillMaxSize(), state = list) {
+            item { ListHeader { Text("Chats", color = Color(0xFF25D366)) } }
+            when {
+                ha.beeperAvailable == false -> item {
+                    Text("Beeper no disponible\n(¿PC o Beeper Desktop apagado?)", color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center)
+                }
+                chats.isEmpty() -> item { Text(ha.status.ifEmpty { "Cargando…" }, color = Muted, fontSize = 12.sp) }
+            }
+            itemsIndexed(chats.take(30)) { i, c ->
+                // the logo already says the network: show the last message, unread count first.
+                // Beeper sends no text for voice notes, stickers and reactions, hence the placeholder.
+                val sub = listOf(if (c.unread > 0) "${c.unread}" else "", c.preview.ifBlank { "📎 Multimedia" }).filter { it.isNotBlank() }.joinToString(" · ")
+                Chip(
+                    onClick = { open(i) },
+                    label = { Text(c.title, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (c.muted) Muted else Color.White) },
+                    secondaryLabel = { Text(sub, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (c.unread > 0) networkColor(c.network) else Muted) },
+                    icon = { Icon(brandIcon(c.network), contentDescription = c.network, tint = networkColor(c.network)) },
+                    colors = ChipDefaults.chipColors(backgroundColor = CardBg, contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
+
+/** Latest messages of one chat and a Responder button (keyboard, dictation or quick replies), confirmed before sending. */
+@Composable
+fun ChatView(ha: Ha, chat: BeeperChat) {
+    var msgs by remember { mutableStateOf<List<BeeperMsg>?>(null) }
+    var reload by remember { mutableIntStateOf(0) }
+    var pending by remember { mutableStateOf<String?>(null) }
+    var viewing by remember { mutableStateOf<Media?>(null) }
+    val ctx = LocalContext.current
+    LaunchedEffect(reload) { ha.loadMessages(chat.id) { msgs = it } }
+    val input = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        r.data?.let { RemoteInput.getResultsFromIntent(it)?.getCharSequence(REPLY_KEY)?.toString() }
+            ?.takeIf { it.isNotBlank() }?.let { pending = it }
+    }
+    val recorder = remember { VoiceRecorder(ctx) }
+    var recording by remember { mutableStateOf(false) }
+    var recorded by remember { mutableStateOf<Double?>(null) } // seconds, waiting for ✓
+    var sending by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    DisposableEffect(Unit) { onDispose { recorder.discard() } } // never leave a recording behind
+    val startRec = { if (recorder.start()) recording = true else toast(ctx, "No se pudo grabar") }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startRec() else toast(ctx, "Sin permiso de micrófono")
+    }
+    val list = rememberScalingLazyListState()
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(positionIndicator = { PositionIndicator(list) }) {
+            ScalingLazyColumn(Modifier.fillMaxSize(), state = list) {
+                item { ListHeader { Text(chat.title, color = networkColor(chat.network), maxLines = 1, overflow = TextOverflow.Ellipsis) } }
+                item {
+                    Chip(
+                        onClick = {
+                            val intent = RemoteInputIntentHelper.createActionRemoteInputIntent()
+                            RemoteInputIntentHelper.putRemoteInputsExtra(
+                                intent,
+                                listOf(RemoteInput.Builder(REPLY_KEY).setLabel(chat.title).setChoices(QUICK_REPLIES).build()),
+                            )
+                            input.launch(intent)
+                        },
+                        label = { Text("Responder") },
+                        icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = networkColor(chat.network)) },
+                        colors = ChipDefaults.chipColors(backgroundColor = CardBg, contentColor = Color.White),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                item {
+                    Chip(
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startRec()
+                            else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        label = { Text("Nota de voz") },
+                        icon = { Icon(Icons.Filled.Mic, contentDescription = null, tint = networkColor(chat.network)) },
+                        colors = ChipDefaults.chipColors(backgroundColor = CardBg, contentColor = Color.White),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                val m = msgs
+                if (m == null) item { Text("Cargando…", color = Muted, fontSize = 12.sp) }
+                else items(m.take(15).size) { i -> Bubble(ha, m[i], chat.network) { viewing = it } }
+            }
+        }
+        viewing?.let { MediaViewer(ha, it) { viewing = null } }
+        pending?.let { text ->
+            SendConfirm(chat.title, text, onCancel = { pending = null }) {
+                pending = null
+                ha.sendText(chat.id, text) { ok ->
+                    toast(ctx, if (ok) "Enviado" else "No se pudo enviar")
+                    reload++
+                }
+            }
+        }
+        if (recording) Recording(onCancel = { recording = false; recorder.discard() }) {
+            recording = false
+            val secs = recorder.stop()
+            if (secs < 0.5) { recorder.discard(); toast(ctx, "Demasiado corta") } else recorded = secs
+        }
+        recorded?.let { secs ->
+            if (sending) Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(indicatorColor = networkColor(chat.network))
+            } else SendConfirm(chat.title, "🎤 Nota de voz (${secs.roundToInt()} s)", onCancel = { recorded = null; recorder.discard() }) {
+                val f = recorder.file
+                if (f == null) { recorded = null; return@SendConfirm }
+                sending = true
+                scope.launch {
+                    val err = ha.sendVoice(chat.id, f, recorder.mime, secs)
+                    recorder.discard()
+                    sending = false
+                    recorded = null
+                    toast(ctx, if (err == null) "Nota de voz enviada" else "No se pudo enviar ($err)")
+                    reload++
+                }
+            }
+        }
+    }
+}
+
+/** Full-screen recording: red mic, running seconds, ■ to stop (then ✗/✓), back or ✗ to throw it away. */
+@Composable
+fun Recording(onCancel: () -> Unit, onStop: () -> Unit) {
+    var secs by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { delay(1000); secs++ } }
+    BackHandler { onCancel() }
+    Column(
+        Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } },
+        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(Icons.Filled.Mic, contentDescription = null, tint = Bad, modifier = Modifier.size(34.dp))
+        Text("Grabando  %d:%02d".format(secs / 60, secs % 60), color = Color.White, fontSize = 16.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Button(onClick = onCancel, colors = ButtonDefaults.secondaryButtonColors()) { Icon(Icons.Filled.Close, contentDescription = "Descartar") }
+            Button(onClick = onStop, colors = ButtonDefaults.primaryButtonColors(backgroundColor = Bad)) { Icon(Icons.Filled.Stop, contentDescription = "Parar") }
+        }
+    }
+}
+
+@Composable
+fun Bubble(ha: Ha, m: BeeperMsg, network: String, open: (Media) -> Unit) {
+    Column(
+        Modifier.fillMaxWidth(0.92f)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (m.mine) networkColor(network).copy(alpha = 0.22f) else CardBg)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalAlignment = if (m.mine) Alignment.End else Alignment.Start,
+    ) {
+        if (!m.mine && m.sender.isNotBlank()) Text(m.sender, color = networkColor(network), fontSize = 10.sp, maxLines = 1)
+        m.media?.let { MediaThumb(ha, it) { open(it) } }
+        val (plain, hrefs) = remember(m.text) { stripHtml(m.text) }
+        if (plain.isNotBlank()) Text(linkified(plain, LocalContext.current), color = Color.White, fontSize = 13.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
+        (hrefs.firstOrNull() ?: findLinks(plain).firstOrNull()?.second)?.let { url ->
+            val ctx = LocalContext.current
+            CompactChip(
+                onClick = { openOnPhone(ctx, url) },
+                label = { Text("Abrir en el teléfono", fontSize = 11.sp, maxLines = 1) },
+                icon = { Icon(Icons.Filled.PhoneAndroid, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                colors = ChipDefaults.chipColors(backgroundColor = Color(0xFF2A2A2A), contentColor = HaBlue),
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+/** Message text with its links highlighted; tapping one opens it on the phone. */
+fun linkified(text: String, ctx: Context): AnnotatedString = buildAnnotatedString {
+    var at = 0
+    for ((range, url) in findLinks(text)) {
+        append(text.substring(at, range.first))
+        withLink(LinkAnnotation.Clickable(url, TextLinkStyles(SpanStyle(color = HaBlue, textDecoration = TextDecoration.Underline))) { openOnPhone(ctx, url) }) {
+            append(text.substring(range.first, range.last + 1))
+        }
+        at = range.last + 1
+    }
+    append(text.substring(at))
+}
+
+/** A photo, or a video's preview frame with ▶ (videos only play on tap). */
+@Composable
+fun MediaThumb(ha: Ha, media: Media, onTap: () -> Unit) {
+    val src = if (media.video) media.poster else media.url
+    val img by produceState<ImageBitmap?>(null, src) { value = src?.let { ha.image(ha.assetUrl(it))?.asImageBitmap() } }
+    val ratio = img?.let { it.width.toFloat() / it.height }
+        ?: if (media.width > 0 && media.height > 0) media.width.toFloat() / media.height else 1.4f
+    Box(
+        Modifier.fillMaxWidth().aspectRatio(ratio.coerceIn(0.6f, 2f)).padding(vertical = 3.dp)
+            .clip(RoundedCornerShape(8.dp)).background(Color(0xFF2A2A2A)).clickable(onClick = onTap),
+        contentAlignment = Alignment.Center,
+    ) {
+        img?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            ?: Icon(if (media.video) Icons.Filled.Videocam else Icons.Filled.Image, contentDescription = null, tint = Muted)
+        if (media.video) Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0x99000000)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.PlayArrow, contentDescription = "Reproducir", tint = Color.White)
+        }
+    }
+}
+
+/** Full screen: a photo fitted to the screen, or the video streamed from HA (tap pauses/resumes). Back closes. */
+@Composable
+fun MediaViewer(ha: Ha, media: Media, onClose: () -> Unit) {
+    BackHandler { onClose() }
+    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        if (media.video) {
+            AndroidView(
+                factory = { c ->
+                    VideoView(c).apply {
+                        setVideoURI(Uri.parse(ha.assetUrl(media.url)), ha.authHeaders())
+                        setOnPreparedListener { start() }
+                        setOnClickListener { if (isPlaying) pause() else start() }
+                    }
+                },
+                onRelease = { it.stopPlayback() },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            val img by produceState<ImageBitmap?>(null, media.url) { value = ha.image(ha.assetUrl(media.url))?.asImageBitmap() }
+            img?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize().clickable(onClick = onClose), contentScale = ContentScale.Fit) }
+                ?: CircularProgressIndicator(indicatorColor = HaBlue)
+        }
+    }
+}
+
+/** "¿Enviar a …?" with the text, so a wrist tap can't send by accident. */
+@Composable
+fun SendConfirm(to: String, text: String, onCancel: () -> Unit, onSend: () -> Unit) {
+    BackHandler { onCancel() }
+    Column(
+        Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } },
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("¿Enviar a $to?", color = Color.White, fontSize = 14.sp, textAlign = TextAlign.Center, maxLines = 2, modifier = Modifier.padding(horizontal = 28.dp))
+        Text("“$text”", color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 30.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Button(onClick = onCancel, colors = ButtonDefaults.secondaryButtonColors()) { Icon(Icons.Filled.Close, contentDescription = "Cancelar") }
+            Button(onClick = onSend, colors = ButtonDefaults.primaryButtonColors(backgroundColor = Color(0xFF25D366))) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Enviar")
+            }
+        }
+    }
+}
+
+private const val REPLY_KEY = "reply"
+private val QUICK_REPLIES = arrayOf<CharSequence>("Ok", "👍", "Ahora no puedo", "Te llamo luego", "Voy")
+
 /** App logo from the card if it has one, else the card's or entity's MDI icon, else a domain icon. */
 @Composable
 fun TileIcon(ha: Ha, id: String, card: Card?, e: Ent?, c: Color) {
@@ -552,7 +848,7 @@ val TableLamp: ImageVector by lazy {
     }.build()
 }
 
-/** Common MDI icons used on dashboards; anything unmapped falls back to a domain icon. */
+/** The MDI icons used on the dashboard; anything unmapped falls back to a domain icon. */
 fun mdi(name: String?): ImageVector? = when (name?.removePrefix("mdi:")) {
     "power", "power-standby" -> Icons.Filled.PowerSettingsNew
     "server", "server-network" -> Icons.Filled.Dns
@@ -564,6 +860,7 @@ fun mdi(name: String?): ImageVector? = when (name?.removePrefix("mdi:")) {
     "home-export-outline" -> Icons.AutoMirrored.Filled.ExitToApp
     "ceiling-light" -> Icons.Filled.Light
     "lamp-night" -> TableLamp
+    "desk-lamp" -> Icons.Filled.Highlight
     "lightbulb", "lightbulb-group", "lamp", "floor-lamp" -> Icons.Filled.Lightbulb
     "music", "speaker" -> Icons.Filled.MusicNote
     "camera", "cctv" -> Icons.Filled.CameraAlt
@@ -610,6 +907,7 @@ fun stateText(e: Ent?): String = when {
 
 fun iconOf(id: String): ImageVector = when {
     "kill_switch" in id -> Icons.Filled.PowerSettingsNew
+    "smart_switch" in id -> Icons.Filled.Dns
     "noche" in id -> Icons.Filled.Bedtime
     "peli" in id -> Icons.Filled.Movie
     "ausente" in id -> Icons.AutoMirrored.Filled.DirectionsWalk

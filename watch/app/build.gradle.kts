@@ -45,6 +45,8 @@ dependencies {
     implementation("androidx.wear.tiles:tiles:1.4.1")
     implementation("androidx.wear.protolayout:protolayout:1.2.1")
     implementation("androidx.concurrent:concurrent-futures:1.2.0")
+    implementation("androidx.wear:wear-input:1.1.0") // system keyboard / voice / quick-reply input for chat replies
+    implementation("androidx.wear:wear-remote-interactions:1.0.0") // open chat links on the phone
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303") // Android's org.json is a stub in JVM unit tests
