@@ -153,6 +153,25 @@ class Ha(
         return rest("/api/states/$ALARM")
     }
 
+    /** Fresh panel state for the prompt, so it never picks arm/disarm off a stale or not-yet-loaded cache. */
+    suspend fun refreshAlarm() {
+        val s = alarmState() ?: return
+        states[ALARM] = Ent(ALARM, s.optString("state"), s.optJSONObject("attributes") ?: JSONObject())
+    }
+
+    suspend fun disarmAlarm() {
+        alarmBusy = true
+        alarmStatus = "Desarmando…"
+        try {
+            rest("/api/services/alarm_control_panel/alarm_disarm", JSONObject().put("entity_id", ALARM))
+                ?: run { alarmStatus = "Error: $lastError"; return }
+            val fin = alarmState()?.optString("state")
+            alarmStatus = if (fin == "disarmed") "Alarma desarmada" else "Estado: ${fin ?: "?"}"
+        } finally {
+            alarmBusy = false
+        }
+    }
+
     /**
      * Full arm (alarm_arm_away = "total"). If the panel rejects it because zones are open, force-arm (Verisure OWA's
      * verisure_owa.force_arm), which arms total skipping those zones; the zones come from the rejected attempt's attributes.

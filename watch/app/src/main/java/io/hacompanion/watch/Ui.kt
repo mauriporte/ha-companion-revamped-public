@@ -496,12 +496,17 @@ fun ConfirmOverlay(ha: Ha, id: String) {
     }
 }
 
-/** Full-screen ALARMA prompt: the red title makes it unmistakable before arming; ✓ arms total (partial if zones are open). */
+/**
+ * Full-screen ALARMA prompt: the red title makes it unmistakable. Reads the panel fresh first, then offers
+ * ✓ disarm when it's armed (or arming/triggered), else ✓ arm total (partial if zones are open).
+ */
 @Composable
 fun AlarmOverlay(ha: Ha) {
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
-    val armed = ha.states[ALARM]?.state?.startsWith("armed") == true
+    var checked by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { ha.refreshAlarm(); checked = true }
+    val state = ha.states[ALARM]?.state
     val close = { ha.alarmPrompt = false; ha.alarmStatus = null }
     BackHandler { if (!ha.alarmBusy) close() }
     Column(
@@ -515,11 +520,25 @@ fun AlarmOverlay(ha: Ha) {
         when {
             ha.alarmBusy -> {
                 CircularProgressIndicator(indicatorColor = Bad, modifier = Modifier.size(28.dp))
-                Text(status ?: "Armando…", color = Color.White, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 28.dp))
+                Text(status ?: "…", color = Color.White, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 28.dp))
             }
-            status != null || armed -> {
-                Text(status ?: "Ya está armada", color = Color.White, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 28.dp))
+            !checked -> {
+                CircularProgressIndicator(indicatorColor = Bad, modifier = Modifier.size(28.dp))
+                Text("Comprobando…", color = Color.White, fontSize = 13.sp)
+            }
+            status != null || state == null -> {
+                Text(status ?: "Sin conexión con HA", color = Color.White, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 28.dp))
                 Button(onClick = close, colors = ButtonDefaults.secondaryButtonColors()) { Icon(Icons.Filled.Check, contentDescription = "Cerrar") }
+            }
+            state != "disarmed" -> {
+                Text("¿Desarmar la alarma?", color = Color.White, fontSize = 15.sp, textAlign = TextAlign.Center)
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Button(onClick = close, colors = ButtonDefaults.secondaryButtonColors()) { Icon(Icons.Filled.Close, contentDescription = "Cancelar") }
+                    Button(
+                        onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); scope.launch { ha.disarmAlarm() } },
+                        colors = ButtonDefaults.primaryButtonColors(backgroundColor = Ok),
+                    ) { Icon(Icons.Filled.Check, contentDescription = "Desarmar") }
+                }
             }
             else -> {
                 Text("¿Armar la alarma?", color = Color.White, fontSize = 15.sp, textAlign = TextAlign.Center)
